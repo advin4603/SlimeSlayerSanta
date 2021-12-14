@@ -3,7 +3,7 @@
 A puzzle game where you play as Santa and slay hordes of slimes. Submission to the IIIT-Hyd OTS-21 25KB Game Jam.
 ## Installation and Usage
 
- 1. Download SlimeSlayerSanta.zip and extract it to a folder in your pc.
+ 1. Download [SlimeSlayerSanta.zip](https://github.com/advin4603/SlimeSlayerSanta/releases/download/1.0.0/slimeSlayerSanta.zip) and extract it to a folder in your pc.
  2.  Run SlimeSlayerSanta.html using the latest version of Chrome or Firefox.
 ## About Slime Slayer Santa
 ##### Main Concepts
