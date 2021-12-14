@@ -1,0 +1,1 @@
+globalState.slimeBallEffect = true;

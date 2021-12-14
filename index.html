@@ -1,0 +1,1567 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+
+    <style id="webmakerstyle">
+      body {
+        background: black;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        flex-direction: column;
+        height: 90vh;
+      }
+      canvas {
+        background: whitesmoke;
+      }
+      button {
+        opacity: 0;
+      }
+      span {
+        color: white;
+        padding-top: 20px;
+        font-family: Georgia, "Times New Roman", Times, serif;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas width="600" height="600"></canvas>
+    <span> </span>
+    <script src="kontra.min.js"></script>
+    <script>
+      let globalState = {
+        collision: true,
+        playerDamage: 1,
+        slimeBallEffect: true,
+        audio: true,
+      };
+      setMsg = (text) => {
+        let span = document.querySelector("span");
+        span.innerText = text;
+      };
+      function checkFiles(files) {
+        files.forEach((filename) => {
+          url = `./GameFiles/${filename}.js`;
+          url +=
+            "?" + new Date().getTime() + Math.floor(Math.random() * 1000000);
+          let el = document.createElement("script");
+          el.id = `${filename}101`;
+          function get_error(x) {
+            globalState[filename] = false;
+            el.remove();
+          }
+          el.onerror = function (e) {
+            console.clear();
+            console.log(
+              "Some file(s) was/were not found. Did you remove them?"
+            );
+            if (el.onerror) get_error(this.id);
+          };
+          el.src = url;
+          document.body.appendChild(el);
+          setTimeout(() => {
+            el.remove();
+          }, 500);
+        });
+      }
+      setInterval(() => {
+        checkFiles(["collision", "playerDamage", "slimeBallEffect", "audio"]);
+      }, 1000);
+
+      let _a = kontra.init(),
+        canvas = _a.canvas,
+        context = _a.context;
+      let Vector = kontra.Vector,
+        initKeys = kontra.initKeys,
+        Sprite = kontra.Sprite,
+        GameLoop = kontra.GameLoop,
+        loadImage = kontra.loadImage,
+        Text = kontra.Text,
+        Button = kontra.Button,
+        collides = kontra.collides,
+        initPointer = kontra.initPointer,
+        keyPressed = kontra.keyPressed;
+      initKeys();
+      initPointer();
+
+      let imageAssets = new Object();
+      let imageNames = [
+        "snowBall",
+        "santaBack",
+        "santaFront",
+        "santaLeft",
+        "santaRight",
+        "slime",
+        "slimeBall",
+        "slimeMaster64",
+      ];
+      let loadCounter = 0;
+      imageNames.forEach((imageName) => {
+        loadImage(`./Assets/${imageName}.png`).then((image) => {
+          imageAssets[imageName] = image;
+          loadCounter++;
+        });
+      });
+      function loaded() {
+        return loadCounter >= imageNames.length;
+      }
+      let getHealthBar = (objX, objY, color, maxWidth) => {
+        return Sprite({
+          height: 2,
+          x: objX,
+          y: objY - 4,
+          color: color,
+          width: maxWidth,
+          maxWidth,
+
+          setHealth: function (health) {
+            this.width = maxWidth * (health / 100);
+          },
+          updatePos: function (x, y) {
+            this.x = x;
+            this.y = y - 4;
+          },
+        });
+      };
+      let Player = new Object();
+      function loadPlayer() {
+        Player.Sprite = Sprite({
+          x: canvas.width / 2,
+          y: canvas.height / 2,
+          speed: 4,
+          maxSpeed: 4,
+          health: 100,
+          healthRecoveryRate: 0.01,
+          image: imageAssets.santaFront,
+          healthBar: getHealthBar(
+            canvas.width,
+            canvas.height,
+            "green",
+            imageAssets.santaFront.width
+          ),
+          pointing: new Vector(0, 1),
+          bullets: [],
+          lastShot: -Infinity,
+          fireRate: 3.5,
+          shoot: function () {
+            let millisecPerBullet = 1000 / this.fireRate;
+            let now = +new Date();
+            if (now - this.lastShot < millisecPerBullet) {
+              return;
+            }
+            this.lastShot = now;
+            let inSlime = false;
+            priorityRender
+              .filter((item) => item.type == "Excretion")
+              .forEach((slimeArea) => {
+                if (inSlime) {
+                  return;
+                }
+                let dist = Vector(
+                  slimeArea.x -
+                    (Player.Sprite.x + Player.Sprite.image.width / 2),
+                  slimeArea.y - (Player.Sprite.y + Player.Sprite.image.height)
+                );
+                if (dist.length() <= slimeArea.radius) {
+                  inSlime = true;
+                }
+              });
+            this.bullets.push(
+              Sprite({
+                x:
+                  this.x +
+                  this.image.width / 2 +
+                  (this.pointing.x * imageAssets.snowBall.width) / 2,
+                y:
+                  this.y +
+                  this.image.height / 2 +
+                  (this.pointing.y * imageAssets.snowBall.height) / 2,
+                image: inSlime ? imageAssets.slimeBall : imageAssets.snowBall,
+                dx: this.pointing.x * 6,
+                dy: this.pointing.y * 6,
+              })
+            );
+          },
+          damage: function (damage) {
+            this.health -= damage;
+            if (this.health <= 0) {
+              // GAMEOVER
+              this.health = 0;
+              enemies = [];
+              gameOverUi.gameOver = true;
+              roundManager.roundStartTime = null;
+            }
+            this.healthBar.setHealth(this.health);
+          },
+          updateBullets: function () {
+            let removeBullets = [];
+            for (var index = 0; index < this.bullets.length; index++) {
+              let bullet = this.bullets[index];
+              if (
+                bullet.x < -2 * bullet.width ||
+                bullet.x > canvas.width + 2 * bullet.width ||
+                bullet.y < -2 * bullet.width ||
+                bullet.y > canvas.height + 2 * bullet.width
+              ) {
+                removeBullets.push(index);
+                continue;
+              }
+              let found = false;
+
+              enemies.forEach((enemy) => {
+                if (found) {
+                  return;
+                }
+                if (
+                  collides(bullet, enemy) &&
+                  (bullet.image == imageAssets.snowBall ||
+                    globalState.slimeBallEffect)
+                ) {
+                  if (globalState.playerDamage) {
+                    if (globalState.playerDamage > 0) {
+                      enemy.damage(10);
+                    } else {
+                      enemy.damage(-10);
+                    }
+                  }
+                  removeBullets.push(index);
+                  found = true;
+                }
+              });
+            }
+            for (var index = removeBullets.length - 1; index >= 0; index--) {
+              this.bullets.splice(removeBullets[index], 1);
+            }
+            this.bullets.forEach(function (bullet) {
+              bullet.update();
+            });
+          },
+          renderBullets: function () {
+            this.bullets.forEach(function (bullet) {
+              bullet.render();
+            });
+          },
+          doUpdate: function () {
+            let inSlime = false;
+            priorityRender
+              .filter((item) => item.type == "Excretion")
+              .forEach((slimeArea) => {
+                if (inSlime) {
+                  return;
+                }
+                let dist = Vector(
+                  slimeArea.x -
+                    (Player.Sprite.x + Player.Sprite.image.width / 2),
+                  slimeArea.y - (Player.Sprite.y + Player.Sprite.image.height)
+                );
+                if (
+                  dist.length() <= slimeArea.radius &&
+                  slimeArea.opacity == 1
+                ) {
+                  inSlime = true;
+                }
+              });
+            if (inSlime) {
+              this.healthRecoveryRate = -Math.abs(
+                this.healthRecoveryRate + 0.04
+              );
+            } else {
+              this.healthRecoveryRate = Math.abs(this.healthRecoveryRate);
+            }
+            this.health = kontra.clamp(
+              0,
+              100,
+              this.health +
+                (!roundManager.flags.displayRoundName
+                  ? this.healthRecoveryRate
+                  : 10)
+            );
+            this.healthBar.setHealth(this.health);
+
+            let input = new Vector(0, 0);
+            if (keyPressed("space")) {
+              this.shoot();
+            }
+            if (keyPressed("left")) {
+              input = new Vector(-1, 0);
+              this.pointing = new Vector(-1, 0);
+              this.image = imageAssets.santaLeft;
+            }
+            if (keyPressed("right")) {
+              input = new Vector(1, 0);
+              this.pointing = new Vector(1, 0);
+              this.image = imageAssets.santaRight;
+            }
+            if (keyPressed("up")) {
+              input = new Vector(0, -1);
+              this.pointing = new Vector(0, -1);
+              this.image = imageAssets.santaBack;
+            }
+            if (keyPressed("down")) {
+              input = new Vector(0, 1);
+              this.pointing = new Vector(0, 1);
+              this.image = imageAssets.santaFront;
+            }
+            this.x += input.x * this.speed;
+            this.y += input.y * this.speed;
+            if (globalState.collision) {
+              this.x = kontra.clamp(0, canvas.width - this.image.width, this.x);
+              this.y = kontra.clamp(
+                0,
+                canvas.height - this.image.height,
+                this.y
+              );
+            }
+            this.healthBar.updatePos(this.x, this.y);
+
+            this.update();
+            this.updateBullets();
+            this.healthBar.update();
+          },
+          doRender: function () {
+            this.render();
+            this.renderBullets();
+            this.healthBar.render();
+          },
+        });
+      }
+
+      let getdasher = (x, y) => {
+        return Sprite({
+          image: imageAssets.slime,
+          x,
+          x0: x,
+          shakeAmp: 10,
+          shakeFreq: 0.05,
+          speed: 25,
+          shakeTime: 2000,
+          flags: { charging: true, dash: false, justSpawned: true },
+          y,
+          health: 100,
+          damageDistance: 15,
+          healthBar: getHealthBar(x, y, "red", imageAssets.slime.width),
+          damage: (amount) => {},
+          doUpdate: function () {
+            if (this.flags.charging) {
+              if (this.flags.justSpawned) {
+                this.flags.justSpawned = false;
+                let thisDasher = this;
+                setTimeout(() => {
+                  thisDasher.flags.charging = false;
+                  thisDasher.flags.dash = true;
+                }, this.shakeTime);
+              }
+              this.x =
+                this.x0 +
+                this.shakeAmp * Math.sin(this.shakeFreq * +new Date());
+            } else {
+              let target = new Vector(
+                Player.Sprite.x - this.x,
+                Player.Sprite.y - this.y
+              );
+              let len = target.length();
+              if (this.flags.dash) {
+                let scalar = len > 0 ? this.speed / len : 0;
+                this.dx = target.x * scalar;
+                this.dy = target.y * scalar;
+                this.flags.dash = false;
+              }
+              if (len <= this.damageDistance && globalState.collision) {
+                Player.Sprite.damage(100);
+              }
+              if (
+                this.x < -this.image.width ||
+                this.x > canvas.width ||
+                this.y < -this.image.height ||
+                this.y > canvas.height
+              ) {
+                enemies = enemies.filter((other) => other != this);
+              }
+            }
+            this.healthBar.updatePos(this.x, this.y);
+            this.healthBar.update();
+            this.update();
+          },
+          doRender: function () {
+            this.render();
+            this.healthBar.render();
+          },
+        });
+      };
+
+      let getShooter = (x, y, shootRate) => {
+        return Sprite({
+          image: imageAssets.slime,
+          x,
+          y,
+          shootTimerId: null,
+          health: 100,
+          healthBar: getHealthBar(x, y, "red", imageAssets.slime.width),
+          flags: { justSpawned: true },
+          bulletSpeed: 5,
+          shootRate: shootRate ?? 1.5,
+          slimeBalls: [],
+          shoot: function (slime) {
+            if (ui.paused || gameOverUi.gameOver) {
+              return;
+            }
+            let midX = slime.x + slime.image.width / 2;
+            let midY = slime.y + slime.image.height / 2;
+            let playerMidX = Player.Sprite.x + Player.Sprite.image.width / 2;
+            let playerMidY = Player.Sprite.y + Player.Sprite.image.height / 2;
+            let toPlayer = new Vector(playerMidX - midX, playerMidY - midY);
+            let len = toPlayer.length();
+            let scalar = len == 0 ? 0 : 1 / len;
+            let direction = new Vector(
+              toPlayer.x * scalar,
+              toPlayer.y * scalar
+            );
+
+            slime.slimeBalls.push(
+              Sprite({
+                x: midX + (direction.x * imageAssets.slimeBall.width) / 2,
+                y: midY + (direction.y * imageAssets.slimeBall.height) / 2,
+                image: imageAssets.slimeBall,
+                anchor: { x: 0.5, y: 0.5 },
+                dx: direction.x * slime.bulletSpeed,
+                dy: direction.y * slime.bulletSpeed,
+              })
+            );
+          },
+          doUpdate: function () {
+            if (this.flags.justSpawned) {
+              this.shootTimerId = setInterval(
+                () => this.shoot(this),
+                1000 / this.shootRate
+              );
+              this.flags.justSpawned = false;
+            }
+            let removeBullets = [];
+            for (var index = 0; index < this.slimeBalls.length; index++) {
+              let bullet = this.slimeBalls[index];
+              if (
+                bullet.x < -2 * bullet.width ||
+                bullet.x > canvas.width + 2 * bullet.width ||
+                bullet.y < -2 * bullet.width ||
+                bullet.y > canvas.height + 2 * bullet.width
+              ) {
+                removeBullets.push(index);
+                continue;
+              }
+              if (
+                collides(bullet, Player.Sprite) &&
+                globalState.slimeBallEffect
+              ) {
+                if (shootRate == undefined) Player.Sprite.damage(10);
+                else Player.Sprite.damage(3);
+                Player.Sprite.speed = kontra.clamp(
+                  0,
+                  Player.Sprite.maxSpeed,
+                  Player.Sprite.speed - 0.5
+                );
+                removeBullets.push(index);
+              }
+            }
+            for (var index = removeBullets.length - 1; index >= 0; index--) {
+              this.slimeBalls.splice(removeBullets[index], 1);
+            }
+
+            this.slimeBalls.forEach(function (bullet) {
+              bullet.update();
+            });
+
+            this.healthBar.updatePos(this.x, this.y);
+            this.healthBar.update();
+            this.update();
+          },
+          doRender: function () {
+            this.render();
+            this.healthBar.render();
+
+            this.slimeBalls.forEach(function (bullet) {
+              bullet.render();
+            });
+          },
+          damage: function (damage) {
+            this.health -= damage;
+            if (this.health <= 0) {
+              enemies = enemies.filter((other) => other != this);
+              clearInterval(this.shootTimerId);
+            }
+            this.healthBar.setHealth(this.health);
+          },
+        });
+      };
+      let getExcretion = (x, y) => {
+        return Sprite({
+          x,
+          y,
+          growRate: 1,
+          opacityFadeRate: 0.01,
+          opacity: 1,
+          flags: { fade: false },
+          color: "#4caf4f",
+          type: "Excretion",
+          radius: 0,
+          doUpdate: function () {
+            if (this.flags.fade) {
+              this.opacity -= this.opacityFadeRate;
+              if (this.opacity <= 0) {
+                priorityRender = priorityRender.filter((item) => item != this);
+                return;
+              }
+            }
+            this.radius = kontra.clamp(
+              0,
+              canvas.width,
+              this.radius + this.growRate
+            );
+          },
+          doRender: function () {
+            this.context.fillStyle = this.color;
+            this.context.globalAlpha = this.opacity;
+            this.context.beginPath();
+            this.context.arc(this.x, this.y, this.radius, 0, 2 * Math.PI);
+            this.context.fill();
+          },
+        });
+      };
+      let slimeMaster64;
+      loadSlimeMaster64 = () => {
+        slimeMaster64 = Sprite({
+          x: canvas.width / 2,
+          y: 100,
+          image: imageAssets.slimeMaster64,
+          phase: "CHASE",
+          chase: {
+            f: 0.01,
+            t1: +new Date() * Math.random(),
+          },
+          shooter: {
+            bulletSpeed: 7,
+            shootRate: 20,
+            slimeBalls: [],
+            flags: { justSpawned: true, switching: false },
+            shootTimerId: null,
+          },
+          excrete: {
+            flags: { justSpawned: true, switching: false },
+            excretion: undefined,
+          },
+          absorb: {
+            f: 0.01,
+            radius: imageAssets.slimeMaster64.height,
+            heart: Text({
+              text: "",
+              font: "15px Georgia",
+              color: "black",
+              x: canvas.width / 2,
+              y: 100,
+              opacity: 0,
+              anchor: { x: 0.5, y: 0.5 },
+              textAlign: "center",
+            }),
+          },
+          dash: {
+            x0: canvas.width / 2,
+            shakeAmp: 10,
+            shakeFreq: 0.05,
+            speed: 35,
+            shakeTime: 3000,
+            damageDistance: 35,
+            flags: {
+              charging: true,
+              dash: false,
+              justSpawned: true,
+              adjusting: false,
+            },
+          },
+          health: 100,
+          healthBar: getHealthBar(
+            canvas.width / 2,
+            100,
+            "orange",
+            imageAssets.slimeMaster64.width
+          ),
+          doRender: function () {
+            this.render();
+            this.healthBar.render();
+            if (this.phase == "ABSORB") {
+              this.absorb.heart.render();
+            }
+            this.shooter.slimeBalls.forEach(function (bullet) {
+              bullet.render();
+            });
+          },
+          damage: function (damage) {
+            this.health -=
+              ((this.phase == "ABSORB" ? -1 : 1) * damage) /
+              (this.phase == "DASH" ? 25 : 15);
+            if (
+              this.health <= 80 &&
+              (this.phase == "CHASE" ||
+                (this.phase == "ABSORB" && this.health >= 60))
+            ) {
+              this.absorb.heart.opacity = 0;
+              this.phase = "SHOOT";
+            }
+            if (
+              this.health <= 40 &&
+              (this.phase == "SHOOT" || this.phase == "EXCRETE") &&
+              !this.shooter.flags.switching &&
+              !this.excrete.flags.switching
+            ) {
+              this.phase = "ABSORB";
+              this.shooter.flags.justSpawned = true;
+              this.shooter.flags.switching = false;
+              this.excrete.flags.justSpawned = true;
+              this.excrete.flags.switching = false;
+              if (this.excrete.excretion != undefined) {
+                this.excrete.excretion.flags.fade = true;
+              }
+
+              this.excrete.excretion = undefined;
+              if (this.shooter.shootTimerId != null) {
+                clearInterval(this.shooter.shootTimerId);
+                this.shooter.shootTimerId = null;
+              }
+            }
+            if (this.health <= 20) {
+              this.phase = "DASH";
+              this.absorb.heart.opacity = 0;
+            }
+            if (this.health <= 0.1) {
+              enemies = [];
+              gameOverUi.gameOver = true;
+              gameOverUi.victory = true;
+              roundManager.roundStartTime = null;
+            }
+            this.healthBar.setHealth(this.health);
+          },
+          doUpdate: function () {
+            switch (this.phase) {
+              case "CHASE":
+                setMsg("");
+                let speed =
+                  (Math.sin(this.chase.f * (+new Date() - this.chase.t1)) +
+                    1 / 2) *
+                  2;
+                let target = new Vector(
+                  Player.Sprite.x - this.x,
+                  Player.Sprite.y - this.y
+                );
+                const len = target.length();
+                const scalar = len != 0 ? speed / len : 0;
+                this.x += target.x * scalar;
+                this.y += target.y * scalar;
+
+                this.dx *= 0.9;
+                this.dy *= 0.9;
+                if (globalState.collision) {
+                  this.x = kontra.clamp(
+                    0,
+                    canvas.width - this.image.width,
+                    this.x
+                  );
+                  this.y = kontra.clamp(
+                    0,
+                    canvas.height - this.image.height,
+                    this.y
+                  );
+                }
+
+                if (collides(this, Player.Sprite)) {
+                  Player.Sprite.damage(100);
+                  const away = new Vector(
+                    this.x - Player.Sprite.x,
+                    this.y - Player.Sprite.y
+                  );
+                  const len = away.length();
+                  const scalar = len != 0 ? 5 / len : 0;
+
+                  this.dx += away.x * scalar;
+                  this.dy += away.y * scalar;
+                }
+                break;
+              case "SHOOT":
+                setMsg("");
+                if (this.shooter.flags.justSpawned) {
+                  this.shooter.shootTimerId = setInterval(
+                    () => this.shoot(this),
+                    1000 / this.shooter.shootRate
+                  );
+                  this.shooter.flags.justSpawned = false;
+                }
+                if (
+                  !globalState.slimeBallEffect &&
+                  !this.shooter.flags.switching
+                ) {
+                  setTimeout(() => {
+                    slimeMaster64.phase = "EXCRETE";
+                    slimeMaster64.shooter.flags.justSpawned = true;
+                    slimeMaster64.shooter.flags.switching = false;
+                    clearInterval(this.shooter.shootTimerId);
+                    this.shooter.shootTimerId = null;
+                  }, 5000);
+
+                  this.shooter.flags.switching = true;
+                }
+                break;
+              case "EXCRETE":
+                setMsg("");
+                if (this.excrete.flags.justSpawned) {
+                  this.excrete.flags.justSpawned = false;
+                  this.excrete.excretion = getExcretion(
+                    this.x + this.image.width / 2,
+                    this.y + this.image.height / 2
+                  );
+                  priorityRender.push(this.excrete.excretion);
+                }
+                if (
+                  globalState.slimeBallEffect &&
+                  !this.excrete.flags.switching
+                ) {
+                  setTimeout(() => {
+                    slimeMaster64.phase = "SHOOT";
+                    slimeMaster64.excrete.flags.justSpawned = true;
+                    slimeMaster64.excrete.flags.switching = false;
+                    slimeMaster64.excrete.excretion.flags.fade = true;
+                    slimeMaster64.excrete.excretion = undefined;
+                  }, 5000);
+                  this.excrete.flags.switching = true;
+                }
+                break;
+              case "ABSORB":
+                setMsg("");
+                let arg = this.absorb.f * +new Date();
+                this.absorb.heart.x =
+                  this.x +
+                  this.image.width / 2 +
+                  this.absorb.radius * Math.cos(arg);
+                this.absorb.heart.y =
+                  this.y +
+                  this.image.height / 2 +
+                  this.absorb.radius * Math.sin(arg);
+                this.absorb.heart.text = "💚";
+                this.absorb.heart.opacity = 1;
+                this.absorb.heart.update();
+                break;
+              case "DASH":
+                setMsg(
+                  "[2021-12-13T19:23:41.419Z Fixed] made slimeMaster64 take damage on colliding with wall."
+                );
+                if (this.dash.flags.charging) {
+                  if (this.dash.flags.justSpawned) {
+                    this.dash.x0 = this.x;
+                    this.dash.flags.justSpawned = false;
+                    let thisDasher = this.dash;
+                    setTimeout(() => {
+                      thisDasher.flags.charging = false;
+                      thisDasher.flags.dash = true;
+                    }, this.dash.shakeTime);
+                  }
+                  this.x =
+                    this.dash.x0 +
+                    this.dash.shakeAmp *
+                      Math.sin(this.dash.shakeFreq * +new Date());
+                  if (
+                    this.x < 10 ||
+                    this.x > canvas.width - this.image.width - 10 ||
+                    this.y < 10 ||
+                    this.y > canvas.height - this.image.height - 10
+                  ) {
+                    if (globalState.collision) {
+                      this.x = kontra.clamp(
+                        10,
+                        canvas.width - this.image.width - 10,
+                        this.x
+                      );
+                      this.y = kontra.clamp(
+                        10,
+                        canvas.height - this.image.height - 10,
+                        this.y
+                      );
+                    }
+                  }
+                } else {
+                  let target = new Vector(
+                    Player.Sprite.x - this.x,
+                    Player.Sprite.y - this.y
+                  );
+                  let len = target.length();
+                  if (this.dash.flags.dash && !this.dash.flags.adjusting) {
+                    let scalar = len > 0 ? this.dash.speed / len : 0;
+                    this.dx = target.x * scalar;
+                    this.dy = target.y * scalar;
+                    this.dash.flags.dash = false;
+                  }
+                  if (
+                    len <= this.dash.damageDistance &&
+                    globalState.collision
+                  ) {
+                    Player.Sprite.damage(100);
+                  }
+                  if (
+                    this.x < 0 ||
+                    this.x > canvas.width - this.image.width ||
+                    this.y < 10 ||
+                    this.y > canvas.height - this.image.height
+                  ) {
+                    if (globalState.collision) {
+                      this.health -= 10;
+                      this.healthBar.setHealth(this.health);
+                      if (this.health <= 0.5) {
+                        // VICTORY
+                        enemies = [];
+                        gameOverUi.gameOver = true;
+                        gameOverUi.victory = true;
+                        roundManager.roundStartTime = null;
+                      }
+                      this.dash.flags.justSpawned = true;
+                      this.dash.flags.charging = true;
+                      this.dash.flags.adjusting = false;
+                      this.dash.flags.dash = false;
+                      this.dx = 0;
+                      this.dy = 0;
+                      this.x = kontra.clamp(
+                        10,
+                        canvas.width - this.image.width - 10,
+                        this.x
+                      );
+                      this.y = kontra.clamp(
+                        10,
+                        canvas.height - this.image.height - 10,
+                        this.y
+                      );
+                    } else {
+                      this.dx = 0;
+                      this.dy = 0;
+                      this.dash.flags.adjusting = true;
+                      this.x = kontra.clamp(
+                        2,
+                        canvas.width - this.image.width - 2,
+                        this.x
+                      );
+                      this.y = kontra.clamp(
+                        10,
+                        canvas.height - this.image.height - 2,
+                        this.y
+                      );
+                    }
+                  } else if (this.dash.flags.adjusting) {
+                    this.dash.flags.adjusting = false;
+                    this.dash.flags.justSpawned = true;
+                    this.dash.flags.charging = true;
+                    this.dash.flags.dash = false;
+                  }
+                }
+                break;
+              default:
+                break;
+            }
+            this.update();
+            this.updateSlimeBalls();
+            this.healthBar.updatePos(this.x, this.y);
+            this.healthBar.update();
+          },
+          updateSlimeBalls: function () {
+            let removeBullets = [];
+            for (
+              var index = 0;
+              index < this.shooter.slimeBalls.length;
+              index++
+            ) {
+              let bullet = this.shooter.slimeBalls[index];
+              if (
+                bullet.x < -2 * bullet.width ||
+                bullet.x > canvas.width + 2 * bullet.width ||
+                bullet.y < -2 * bullet.width ||
+                bullet.y > canvas.height + 2 * bullet.width
+              ) {
+                removeBullets.push(index);
+                continue;
+              }
+              if (
+                collides(bullet, Player.Sprite) &&
+                globalState.slimeBallEffect
+              ) {
+                Player.Sprite.damage(3);
+                Player.Sprite.speed = kontra.clamp(
+                  0,
+                  Player.Sprite.maxSpeed,
+                  Player.Sprite.speed - 0.01
+                );
+                removeBullets.push(index);
+              }
+            }
+            for (var index = removeBullets.length - 1; index >= 0; index--) {
+              this.shooter.slimeBalls.splice(removeBullets[index], 1);
+            }
+            this.shooter.slimeBalls.forEach(function (bullet) {
+              bullet.update();
+            });
+          },
+          shoot: function (slimeMaster64) {
+            if (ui.paused || gameOverUi.gameOver) {
+              return;
+            }
+            let midX = slimeMaster64.x + slimeMaster64.image.width / 2;
+            let midY = slimeMaster64.y + slimeMaster64.image.height / 2;
+            let playerMidX = Player.Sprite.x + Player.Sprite.image.width / 2;
+            let playerMidY = Player.Sprite.y + Player.Sprite.image.height / 2;
+            let toPlayer = new Vector(playerMidX - midX, playerMidY - midY);
+            let len = toPlayer.length();
+            let scalar = len == 0 ? 0 : 1 / len;
+            let direction = new Vector(
+              toPlayer.x * scalar,
+              toPlayer.y * scalar
+            );
+
+            slimeMaster64.shooter.slimeBalls.push(
+              Sprite({
+                x: midX + (direction.x * imageAssets.slimeBall.width) / 2,
+                y: midY + (direction.y * imageAssets.slimeBall.height) / 2,
+                image: imageAssets.slimeBall,
+                anchor: { x: 0.5, y: 0.5 },
+                dx: direction.x * slimeMaster64.shooter.bulletSpeed,
+                dy: direction.y * slimeMaster64.shooter.bulletSpeed,
+              })
+            );
+          },
+        });
+        enemies = [];
+        enemies.push(slimeMaster64);
+      };
+      let getExcreter = (x, y) => {
+        return Sprite({
+          image: imageAssets.slime,
+          x,
+          y,
+          health: 100,
+          excretion: undefined,
+          flags: { justSpawned: true },
+          healthBar: getHealthBar(x, y, "red", imageAssets.slime.width),
+          doUpdate: function () {
+            if (this.flags.justSpawned) {
+              this.flags.justSpawned = false;
+              this.excretion = getExcretion(
+                this.x + this.image.width / 2,
+                this.y + this.image.height / 2
+              );
+              priorityRender.push(this.excretion);
+            }
+            this.update();
+            this.healthBar.update();
+          },
+          damage: function (damage) {
+            this.health -= damage;
+            if (this.health <= 0) {
+              enemies = enemies.filter((other) => other != this);
+              this.excretion.flags.fade = true;
+            }
+            this.healthBar.setHealth(this.health);
+          },
+          doRender: function () {
+            this.render();
+            this.healthBar.render();
+          },
+        });
+      };
+      let getAbsorber = (x, y) => {
+        return Sprite({
+          image: imageAssets.slime,
+          x,
+          y,
+          f: 0.01,
+          health: 10,
+          radius: imageAssets.slime.height,
+          heart: Text({
+            text: "",
+            font: "15px Georgia",
+            color: "black",
+            x: x,
+            y: y,
+            opacity: 0,
+            anchor: { x: 0.5, y: 0.5 },
+            textAlign: "center",
+          }),
+          healthBar: getHealthBar(x, y, "red", imageAssets.slime.width),
+          doUpdate: function () {
+            this.update();
+            this.healthBar.update();
+            this.healthBar.setHealth(this.health);
+            let arg = this.f * +new Date();
+            this.heart.x =
+              this.x + this.image.width / 2 + this.radius * Math.cos(arg);
+            this.heart.y =
+              this.y + this.image.height / 2 + this.radius * Math.sin(arg);
+            this.heart.text = "💚";
+            this.heart.opacity = 1;
+          },
+          damage: function (damage) {
+            this.health += damage;
+            if (this.health <= 0) {
+              enemies = enemies.filter((other) => other != this);
+            }
+            this.healthBar.setHealth(this.health);
+          },
+          doRender: function () {
+            this.render();
+            this.heart.render();
+            this.healthBar.render();
+          },
+        });
+      };
+
+      let getChaser = (x, y) => {
+        return Sprite({
+          image: imageAssets.slime,
+          f: 0.01,
+          t1: +new Date() * Math.random(),
+          x,
+          y,
+          awayForce: 7,
+          health: 100,
+          healthBar: getHealthBar(x, y, "red", imageAssets.slime.width),
+          doUpdate: function () {
+            let speed =
+              (Math.sin(this.f * (+new Date() - this.t1)) + 1 / 2) * 2;
+            let awayX = 0;
+            let awayY = 0;
+            enemies.forEach((enemy) => {
+              if (enemy != this) {
+                let away = new Vector(this.x - enemy.x, this.y - enemy.y);
+                let awayLen = away.length();
+                if (awayLen < 0.2) {
+                  awayX += 1;
+                  awayY += 1;
+                } else {
+                  awayX += (away.x / awayLen) * this.awayForce;
+                  awayY += (away.y / awayLen) * this.awayForce;
+                }
+              }
+            });
+
+            let target = new Vector(
+              Player.Sprite.x - this.x + awayX,
+              Player.Sprite.y - this.y + awayY
+            );
+            const len = target.length();
+            const scalar = len != 0 ? speed / len : 0;
+            this.x += target.x * scalar;
+            this.y += target.y * scalar;
+            this.update();
+            this.dx *= 0.9;
+            this.dy *= 0.9;
+            if (globalState.collision) {
+              this.x = kontra.clamp(0, canvas.width - this.image.width, this.x);
+              this.y = kontra.clamp(
+                0,
+                canvas.height - this.image.height,
+                this.y
+              );
+            }
+            this.healthBar.updatePos(this.x, this.y);
+            this.healthBar.update();
+            if (collides(this, Player.Sprite)) {
+              Player.Sprite.damage(5);
+              const away = new Vector(
+                this.x - Player.Sprite.x,
+                this.y - Player.Sprite.y
+              );
+              const len = away.length();
+              const scalar = len != 0 ? 5 / len : 0;
+
+              this.dx += away.x * scalar;
+              this.dy += away.y * scalar;
+            }
+          },
+          damage: function (damage) {
+            this.health -= damage;
+            if (this.health <= 0) {
+              enemies = enemies.filter((other) => other != this);
+            }
+            this.healthBar.setHealth(this.health);
+          },
+          doRender: function () {
+            this.render();
+            this.healthBar.render();
+          },
+        });
+      };
+      let enemies = [];
+      let priorityRender = [];
+      function getEnemySpawnPoint(width, height) {
+        return [
+          kontra.clamp(
+            2 * width,
+            canvas.width - 2 * width,
+            Math.random() * canvas.width
+          ),
+          kontra.clamp(
+            2 * height,
+            canvas.height - 2 * height,
+            Math.random() * canvas.height
+          ),
+        ];
+      }
+      let spawnMore = (roundStartTime, n, enemyGetter, minInterval) => {
+        if (
+          gameOverUi.gameOver ||
+          roundStartTime != roundManager.roundStartTime
+        ) {
+          return;
+        }
+
+        let spawn = (i) => {
+          if (
+            gameOverUi.gameOver ||
+            roundStartTime != roundManager.roundStartTime
+          ) {
+            return;
+          }
+          let spawn = getEnemySpawnPoint(
+            imageAssets.slime.width,
+            imageAssets.slime.height
+          );
+          enemies.push(enemyGetter(spawn[0], spawn[1]));
+          if (i == n - 1) {
+            advanceRound(roundStartTime);
+          }
+        };
+        if (enemies.length == 0) {
+          if (n == 0) {
+            advanceRound(roundStartTime);
+          }
+          for (let index = 0; index < n; index++) {
+            setTimeout(() => {
+              spawn(index);
+            }, index * minInterval);
+          }
+        } else {
+          setTimeout(() => {
+            spawnMore(roundStartTime, n, enemyGetter, minInterval);
+          }, 100);
+        }
+      };
+      let advanceRound = (roundStartTime) => {
+        if (
+          gameOverUi.gameOver ||
+          roundStartTime != roundManager.roundStartTime
+        ) {
+          return;
+        }
+        if (enemies.length == 0) {
+          roundManager.round += 1;
+          Player.Sprite.speed = Player.Sprite.maxSpeed;
+
+          roundManager.doRound();
+        } else {
+          setTimeout(() => {
+            advanceRound(roundStartTime);
+          }, 1000);
+        }
+      };
+      function getGenericLoader(getEnemy, num, timeDelta, passInFunc) {
+        return function loadEnemy() {
+          enemies = [];
+          let coords = getEnemySpawnPoint(
+            imageAssets.slime.width,
+            imageAssets.slime.height
+          );
+          enemies.push(getEnemy(coords[0], coords[1]));
+          spawnMore(
+            roundManager.roundStartTime,
+            num,
+            (x, y) => getEnemy(x, y, passInFunc),
+            timeDelta
+          );
+        };
+      }
+      let loadChaserRound = getGenericLoader(getChaser, 5, 2000);
+      let loadDasherRound = getGenericLoader(getdasher, 69, 100);
+      let loadShooterRound = getGenericLoader(getShooter, 5, 100, 20);
+      let loadAbsorberRound = getGenericLoader(getAbsorber, 0, 100);
+      let loadExcreterRound = getGenericLoader(getExcreter, 5, 100);
+
+      let gameOverUi = Sprite({
+        x: 0,
+        y: 0,
+        opacity: 0,
+        victory: false,
+        lerpSpeed: 0.025,
+        restart: Button({
+          x: canvas.width / 2,
+          y: canvas.height / 2 + 200,
+          anchor: { x: 0.5, y: 0.5 },
+          width: 150,
+          height: 50,
+          color: "#007808",
+          opacity: 0,
+          text: {
+            text: "🔄 Restart",
+            color: "white",
+            font: "20px Georgia",
+            opacity: 0,
+            anchor: { x: 0.5, y: 0.5 },
+          },
+          onDown() {
+            this.y += this.y == canvas.height / 2 + 200 ? 5 : 0;
+            this.color = "#002903";
+          },
+          onUp() {
+            this.y -= 5;
+            this.color = "#007808";
+            this.lerpPercent = 0;
+            this.opacity = 0;
+            gameOverUi.gameOver = false;
+            enemies = [];
+            roundManager.start();
+          },
+        }),
+        text: Text({
+          text: "",
+          font: "80px Georgia",
+          color: "white",
+          opacity: 0,
+          x: canvas.width / 2,
+          y: canvas.height / 2,
+          anchor: { x: 0.5, y: 0.5 },
+          textAlign: "center",
+        }),
+        width: canvas.width,
+        height: canvas.height,
+        color: "red",
+        byline: Text({
+          text: "Game by Ayan Datta (advin4603)\n\nFor the IIITH OTS-21 Game Jam",
+          font: "30px Georgia",
+          color: "white",
+          opacity: 0,
+          x: canvas.width / 2,
+          y: canvas.height / 2 + 200,
+          anchor: { x: 0.5, y: 0.5 },
+          textAlign: "center",
+        }),
+        gameOver: false,
+        doUpdate: function () {
+          if (this.victory) {
+            this.text.text = "🎉You Win!🎉";
+            setMsg("");
+          } else {
+            this.text.text = "🎄Game Over🎄";
+          }
+          this.opacity = kontra.clamp(0, 1, this.opacity + this.lerpSpeed);
+          this.text.opacity =
+            this.byline.opacity =
+            this.restart.opacity =
+            this.restart.textNode.opacity =
+              this.opacity;
+        },
+        doRender: function () {
+          this.render();
+          this.text.render();
+          if (!this.victory) {
+            this.restart.render();
+          } else {
+            this.byline.render();
+          }
+        },
+      });
+      let gameStartUi = Sprite({
+        x: 0,
+        y: 0,
+        width: canvas.width,
+        height: canvas.height,
+        color: "red",
+        started: false,
+        lerpSpeed: 0.02,
+        lerpPercent: 0,
+        buttonLerpPercent: 0,
+        controlLerpPercent: 0,
+        text: Text({
+          text: "Slime Slayer Santa🎅",
+          font: "40px Georgia",
+          color: "white",
+          opacity: 0,
+          x: canvas.width / 2,
+          y: canvas.height / 2 - 200,
+          anchor: { x: 0.5, y: 0.5 },
+          textAlign: "center",
+        }),
+        controlText: Text({
+          text: "Controls:\n\n\n↑ ↓ ← →  Arrow Keys to move\n\nSpace to throw snowballs\n\n↩ Enter to pause\n\n\nRules:\n\n1) Kill Slimes\n\n2) Game Over when health reaches 0",
+          font: "15px Georgia",
+          color: "white",
+          opacity: 0,
+          x: canvas.width / 2,
+          y: canvas.height / 2 - 20,
+          anchor: { x: 0.5, y: 0.5 },
+          textAlign: "center",
+        }),
+        start: Button({
+          x: canvas.width / 2,
+          y: canvas.height / 2 + 200,
+          anchor: { x: 0.5, y: 0.5 },
+          width: 100,
+          height: 50,
+          color: "#007808",
+          opacity: 0,
+          text: {
+            text: "▶ Start",
+            color: "white",
+            font: "20px Georgia",
+            anchor: { x: 0.5, y: 0.5 },
+            opacity: 0,
+          },
+          onDown() {
+            this.y += this.y == canvas.height / 2 + 200 ? 5 : 0;
+            this.color = "#002903";
+          },
+          onUp() {
+            this.y -= 5;
+            this.color = "#007808";
+            gameStartUi.started = true;
+            if (!globalState.audio) {
+              roundManager.start();
+            }
+          },
+        }),
+        doUpdate: function () {
+          this.lerpPercent += this.lerpSpeed;
+          this.buttonLerpPercent +=
+            this.controlLerpPercent >= 1 ? this.lerpSpeed : 0;
+          this.controlLerpPercent += this.lerpPercent >= 1 ? this.lerpSpeed : 0;
+          var l = kontra.lerp(0, 1, this.buttonLerpPercent);
+          this.text.opacity = kontra.lerp(0, 1, this.lerpPercent);
+          this.start.opacity = l;
+          this.start.textNode.opacity = l;
+          this.controlText.opacity = kontra.lerp(0, 1, this.controlLerpPercent);
+
+          this.update();
+          this.text.update();
+
+          if (!globalState.audio) {
+            this.start.update();
+            this.controlText.text =
+              "Controls:\n\n\n↑ ↓ ← →  Arrow Keys to move\n\nSpace to throw snowballs\n\n↩ Enter to pause\n\n\nRules:\n\n1) Kill Slimes\n\n2) Game Over when health reaches 0";
+          } else {
+            this.controlText.text =
+              "Audio.js Corrupted:\n\n\nPossible Workarounds:\n\n->Move Audio.js from Gamefiles to the Trash folder\n\nOR\n\n->Set globalState.audio to false in GameFiles/audio.js in a text editor";
+            setMsg(
+              "[Note to self] Remove Notes and Logs and fix audio corruption before releasing game."
+            );
+          }
+          this.controlText.update();
+        },
+        doRender: function () {
+          if (!this.started) {
+            this.render();
+            this.text.render();
+            this.controlText.render();
+            if (!globalState.audio) this.start.render();
+          }
+        },
+      });
+      let ui = Sprite({
+        x: 0,
+        y: 0,
+        width: canvas.width,
+        height: canvas.height,
+        opacity: 0.75,
+        color: "black",
+        lastPaused: +new Date(),
+        pauseInfo: Text({
+          text: "⏸️\n\nPress Enter to Unpause",
+          font: "40px Georgia",
+          color: "white",
+          x: canvas.width / 2,
+          y: canvas.height / 2,
+          anchor: { x: 0.5, y: 0.5 },
+          textAlign: "center",
+        }),
+        pauseToggleInterval: 200,
+        paused: false,
+        doUpdate: function () {
+          let now = +new Date();
+          if (
+            keyPressed("enter") &&
+            now - this.lastPaused > this.pauseToggleInterval &&
+            gameStartUi.started &&
+            !gameOverUi.gameOver
+          ) {
+            this.paused = !this.paused;
+            this.lastPaused = now;
+          }
+          this.pauseInfo.update();
+          this.update();
+        },
+        doRender: function () {
+          this.render();
+          this.pauseInfo.render();
+        },
+      });
+      let roundManager;
+      roundManager = Text({
+        rounds: [
+          ["Chasers", loadChaserRound, ""],
+          [
+            "Shooters",
+            loadShooterRound,
+            "[Note to self] Fix overpowered slimeballs",
+          ],
+          [
+            "Excreters",
+            loadExcreterRound,
+            "[2021-12-11T15:43:56.770Z Fixed] Made player use slimeballs for this round.",
+          ],
+          [
+            "Dashers",
+            loadDasherRound,
+            "[Note to self] Fix dashers hitting the player too hard.",
+          ],
+          [
+            "Absorbers",
+            loadAbsorberRound,
+            "[2021-12-11T15:45:59.000Z Fixed] made absorber interpret damage as -ve.",
+          ],
+          ["slimeMaster64", loadSlimeMaster64, "good luck"],
+        ],
+        text: "",
+        font: "60px Georgia",
+        color: "black",
+        opacity: 0,
+        lerpSpeed: 0.05,
+        lerpPercent: 0,
+        roundStartTime: null,
+        round: 0,
+        roundStartDelay: 2000,
+        roundNameDisplayTime: 2000,
+        roundNameEnemySpawnInterval: 500,
+        flags: { displayRoundName: false, hidingRoundName: false },
+        x: canvas.width / 2,
+        y: canvas.height / 2,
+        anchor: { x: 0.5, y: 0.5 },
+        textAlign: "center",
+        start: function () {
+          loadPlayer();
+          setTimeout(() => {
+            roundManager.doRound();
+          }, this.roundStartDelay);
+        },
+        doRound: function () {
+          if (this.round >= this.rounds.length) {
+            return;
+          }
+          this.flags.displayRoundName = true;
+          this.flags.hidingRoundName = false;
+          this.lerpPercent = 0;
+          this.lerpSpeed = Math.abs(this.lerpSpeed);
+          if (this.round == this.rounds.length - 1) {
+            this.text = `Final Round:\n${this.rounds[this.round][0]}`;
+          } else {
+            this.text = `Round ${this.round + 1}:\n${
+              this.rounds[this.round][0]
+            }`;
+          }
+
+          setMsg(this.rounds[this.round][2]);
+          this.roundStartTime = +new Date();
+        },
+        doUpdate: function () {
+          if (this.flags.displayRoundName) {
+            this.lerpPercent = kontra.clamp(
+              0,
+              1,
+              this.lerpPercent + this.lerpSpeed
+            );
+            this.opacity = this.lerpPercent;
+            if (this.lerpPercent >= 1 && !this.flags.hidingRoundName) {
+              this.flags.hidingRoundName = true;
+              setTimeout(() => {
+                roundManager.lerpSpeed = -Math.abs(roundManager.lerpSpeed);
+              }, this.roundNameDisplayTime);
+            }
+            if (this.lerpPercent <= 0 && this.flags.hidingRoundName) {
+              this.flags.hidingRoundName = false;
+              this.flags.displayRoundName = false;
+              this.lerpSpeed = Math.abs(this.lerpSpeed);
+              setTimeout(() => {
+                roundManager.rounds[roundManager.round][1]();
+              }, this.roundNameEnemySpawnInterval);
+            }
+          }
+        },
+        doRender: function () {
+          if (!this.flags.displayRoundName) {
+            return;
+          }
+          this.render();
+        },
+      });
+      let prevLoaded = loaded();
+      window.addEventListener("blur", () => {
+        if (gameStartUi.started && !gameOverUi.gameOver && !ui.paused) {
+          ui.paused = true;
+          this.lastPaused = +new Date();
+          ui.doRender();
+        }
+      });
+      let loop = GameLoop({
+        update: function () {
+          let load = loaded();
+          if (prevLoaded != load) {
+            prevLoaded = load;
+          }
+
+          if (load) {
+            gameStartUi.doUpdate();
+            if (gameStartUi.started) {
+              collides = globalState.collision
+                ? kontra.collides
+                : (a, b) => false;
+              ui.doUpdate();
+              if (gameOverUi.gameOver) {
+                gameOverUi.doUpdate();
+                return;
+              }
+              if (ui.paused) {
+                return;
+              }
+              roundManager.doUpdate();
+              Player?.Sprite?.doUpdate();
+              enemies.forEach((enemy) => {
+                enemy.doUpdate();
+              });
+              priorityRender.forEach((item) => {
+                item.doUpdate();
+              });
+            }
+          }
+        },
+        render: function () {
+          if (prevLoaded) {
+            priorityRender.forEach((item) => {
+              item.doRender();
+            });
+            Player?.Sprite?.doRender();
+            enemies.forEach((enemy) => {
+              enemy.doRender();
+            });
+            roundManager.doRender();
+            if (ui.paused) {
+              ui.doRender();
+            }
+            if (gameOverUi.gameOver) {
+              gameOverUi.doRender();
+            }
+            gameStartUi.doRender();
+          }
+        },
+      });
+      let file = loop.start();
+
+      //# sourceURL=userscript.js
+    </script>
+  </body>
+</html>
